@@ -211,19 +211,36 @@ class Runner:
                     },
                 }
 
-        # 并发执行 ip.cx / Gemini / YouTube 字幕翻译检测（各自独立连接、互不阻断）
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            f_ipcx = pool.submit(_run_ipcx)
-            f_gem = pool.submit(_run_gemini) if check_gem else None
-            f_yt = pool.submit(_run_yt) if check_yt else None
+        # 阶段 1：ip.cx 与 YouTube 字幕翻译并发执行（不同域名互不干扰，且让 YouTube 在最干净的状态下先测）
+        # 若未开启 YouTube，则让 ip.cx 与 Gemini 直接并发；若两者都开启，则将 Gemini 错峰放在阶段 2，
+        # 避免同一节点同一毫秒并发轰炸 6 个 Google 接口互相牵连限流。
+        if check_yt:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                f_ipcx = pool.submit(_run_ipcx)
+                f_yt = pool.submit(_run_yt)
+                data = f_ipcx.result()
+                data.update(f_yt.result())
 
-            data = f_ipcx.result()
-            if f_gem is not None:
+            if check_gem and not self._stop.is_set():
+                node_reachable = (
+                    bool(data.get("ok"))
+                    or str(data.get("error") or "").startswith("HTTP ")
+                    or bool(data.get("yt_translate_code"))
+                )
+                if node_reachable:
+                    g = _run_gemini()
+                    gemini.apply_ipcx_country(g, str(data.get("country_code") or ""))
+                    data.update(g)
+        elif check_gem:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                f_ipcx = pool.submit(_run_ipcx)
+                f_gem = pool.submit(_run_gemini)
+                data = f_ipcx.result()
                 g = f_gem.result()
                 gemini.apply_ipcx_country(g, str(data.get("country_code") or ""))
                 data.update(g)
-            if f_yt is not None:
-                data.update(f_yt.result())
+        else:
+            data = _run_ipcx()
 
         self.store.add_result(run_id, node, data, delay)
         gem_str = f" | Gemini: {gemini.format_summary(data)}" if data.get("gemini_level") else ""

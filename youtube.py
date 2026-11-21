@@ -2,7 +2,7 @@
 
 检测流程（纯 Python 标准库，单节点每次实时拉取字幕轨，不跨节点复用 baseUrl）：
   1. 请求带有稳定英文 ASR 自动生成字幕的公开 YouTube 播放页（默认 dQw4w9WgXcQ，可配置）；
-     携带 Chrome UA、Accept-Language 与 SOCS Cookie（跳过欧洲/EEA 节点 GDPR 同意墙）；
+     携带 Chrome UA、Accept-Language（默认不塞固定 SOCS Cookie，仅在命中欧区 GDPR 同意墙时补带 SOCS 重试一次）；
   2. 从 HTML 解析 captionTracks，严格筛选 kind == "asr" 的自动生成字幕轨（优先英文，不误取人工轨）；
   3. 对该 asr 轨的 baseUrl 拼接 &tlang=zh-Hans&fmt=json3，附带 Origin / Referer 发 1 次探测请求：
      - HTTP 200 且非异常 HTML 页（即使无 PO Token 返回空响应体 len=0 也属正常） -> ok（可用）
@@ -82,18 +82,19 @@ def normalize_video_id(raw: str | None) -> str:
     return s
 
 
-def _opener_with_socs(proxy_url: str | None):
-    """为单次节点检测创建独立 opener（带 SOCS Cookie 且不读取系统代理）。"""
+def _build_opener(proxy_url: str | None, with_socs: bool = False):
+    """为单次节点检测创建独立 opener（不读取系统代理；仅在需要跳过 GDPR 同意墙时注入 SOCS Cookie）。"""
     jar = http.cookiejar.CookieJar()
-    for domain in (".youtube.com", ".google.com"):
-        jar.set_cookie(http.cookiejar.Cookie(
-            version=0, name="SOCS", value=SOCS_VALUE,
-            port=None, port_specified=False,
-            domain=domain, domain_specified=True, domain_initial_dot=True,
-            path="/", path_specified=True,
-            secure=True, expires=None, discard=True,
-            comment=None, comment_url=None, rest={}, rfc2109=False,
-        ))
+    if with_socs:
+        for domain in (".youtube.com", ".google.com"):
+            jar.set_cookie(http.cookiejar.Cookie(
+                version=0, name="SOCS", value=SOCS_VALUE,
+                port=None, port_specified=False,
+                domain=domain, domain_specified=True, domain_initial_dot=True,
+                path="/", path_specified=True,
+                secure=True, expires=None, discard=True,
+                comment=None, comment_url=None, rest={}, rfc2109=False,
+            ))
     handlers = [
         urllib.request.HTTPCookieProcessor(jar),
         urllib.request.ProxyHandler(
@@ -101,6 +102,11 @@ def _opener_with_socs(proxy_url: str | None):
         ),
     ]
     return urllib.request.build_opener(*handlers)
+
+
+def _is_consent_url(url: str) -> bool:
+    u = url.lower()
+    return "consent.youtube.com" in u or "consent.google.com" in u
 
 
 def _decode_bytes(resp) -> bytes:
@@ -224,7 +230,7 @@ def check(
     """经由 proxy_url 检测 YouTube ASR 字幕自动翻译（简体中文）可用性。"""
     vid = normalize_video_id(video_id)
     watch_url = f"https://www.youtube.com/watch?v={urllib.parse.quote(vid, safe='')}"
-    opener = _opener_with_socs(proxy_url)
+    opener = _build_opener(proxy_url, with_socs=False)
     t0 = time.perf_counter()
 
     extra: dict = {
@@ -236,19 +242,27 @@ def check(
     }
 
     # ------------------------------------------------------------------ 1. 拉取播放页
-    w_code, w_url, w_hdrs, w_raw, w_ms, w_err = _request(
-        opener,
-        watch_url,
-        timeout,
-        headers={
-            "User-Agent": UA,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate",
-            "Cache-Control": "no-cache",
-        },
-    )
+    watch_headers = {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+        "Cache-Control": "no-cache",
+    }
+    w_code, w_url, w_hdrs, w_raw, w_ms, w_err = _request(opener, watch_url, timeout, headers=watch_headers)
+
+    # 仅在欧洲/EEA 等节点命中 GDPR 同意墙时补带 SOCS Cookie 重试一次，避免非欧区发送固定 SOCS
+    socs_retry = False
+    if not w_err and _is_consent_url(w_url):
+        socs_retry = True
+        opener = _build_opener(proxy_url, with_socs=True)
+        w_code2, w_url2, w_hdrs2, w_raw2, w_ms2, w_err2 = _request(opener, watch_url, timeout, headers=watch_headers)
+        w_code, w_url, w_hdrs, w_raw, w_err = w_code2, w_url2, w_hdrs2, w_raw2, w_err2
+        w_ms += w_ms2
+
     extra["watch"] = {"http_status": w_code, "latency_ms": w_ms, "final_url": w_url[:120]}
+    if socs_retry:
+        extra["watch"]["socs_retry"] = True
 
     if w_err:
         total_ms = int((time.perf_counter() - t0) * 1000)
@@ -256,7 +270,6 @@ def check(
 
     w_html = w_raw.decode("utf-8", "replace")
     w_lower = w_html.lower()
-    w_url_lower = w_url.lower()
 
     if _is_sorry(w_code, w_url, w_lower):
         total_ms = int((time.perf_counter() - t0) * 1000)
@@ -266,7 +279,7 @@ def check(
         total_ms = int((time.perf_counter() - t0) * 1000)
         return _result("blocked", w_code, f"播放页拒绝访问 (HTTP {w_code})", total_ms, extra)
 
-    if "consent.youtube.com" in w_url_lower or "consent.google.com" in w_url_lower:
+    if _is_consent_url(w_url):
         total_ms = int((time.perf_counter() - t0) * 1000)
         return _result("blocked", w_code, "播放页被重定向至 GDPR 同意墙", total_ms, extra)
 

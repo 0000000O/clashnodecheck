@@ -653,7 +653,7 @@ const CFG_FIELDS = [
   ['gemini_timeout_sec', 'Gemini 检测超时 (秒)', 'number'],
   ['gemini_api_key', 'Gemini API Key（可选）', 'password', '留空仅探测 API 网关可达性；填写后会发送极简请求 (maxOutputTokens=1) 实测该出口是否被地区/机房拒绝'],
   ['gemini_api_model', 'Gemini API 实测模型', 'text', '默认 gemini-3.5-flash-lite；仅在填写 API Key 后生效'],
-  ['check_yt_translate', '启用 YouTube 字幕翻译检测', 'bool', '实时拉取公开视频的 ASR 自动生成英文字幕轨并探测简体中文翻译是否触发 429 限流（与 ip.cx / Gemini 并发执行）'],
+  ['check_yt_translate', '启用 YouTube 字幕翻译检测', 'bool', '实时拉取公开视频的 ASR 自动生成英文字幕轨并探测简体中文翻译是否触发 429 限流（与 ip.cx 并发、与 Gemini 错峰执行）'],
   ['yt_video_id', 'YouTube 测试视频 ID', 'text', '默认 dQw4w9WgXcQ（也支持粘贴完整 YouTube 链接，需含英文自动生成字幕）'],
   ['yt_timeout_sec', 'YouTube 字幕检测超时 (秒)', 'number'],
   ['auto_interval_min', '定时自动测试间隔 (分钟)', 'number', '0 = 关闭；需要本程序保持运行'],
