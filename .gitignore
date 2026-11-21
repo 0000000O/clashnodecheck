@@ -1,0 +1,28 @@
+# 本地配置与密钥（勿提交到 Git）
+config.json
+
+# 本地测试记录数据库（含节点名与出口 IP 历史，勿提交到 Git）
+*.db
+*.db-wal
+*.db-shm
+*.db.bak
+*.sqlite
+*.sqlite3
+
+# 导出文件与日志
+*.csv
+*.log
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# 打包产物与系统临时文件
+dist/
+build/
+*.spec
+.DS_Store
+Thumbs.db

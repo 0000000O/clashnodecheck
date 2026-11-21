@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ip.cx 节点出口记录器</title>
+<style>
+  :root {
+    --bg: #0f1216; --panel: #171b21; --panel2: #1e232b; --line: #2a313b;
+    --text: #e6e9ee; --dim: #8b95a3; --accent: #4f8cff; --ok: #2fbf71; --warn: #f0a33a; --bad: #ef5350;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, "Microsoft YaHei", sans-serif; }
+  button, input, select { font: inherit; color: inherit; }
+  button { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+  button.sm { padding: 3px 8px; font-size: 12px; }
+  input[type=text], input[type=number], input[type=password], select { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; outline: none; }
+  input:focus, select:focus { border-color: var(--accent); }
+  .mono { font-family: var(--mono); }
+  .dim { color: var(--dim); }
+
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.run { background: var(--warn); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .spacer { flex: 1; }
+
+  .layout { display: grid; grid-template-columns: 340px 1fr; height: calc(100% - 51px); }
+  aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+  aside .tools { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid var(--line); }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row > * { flex: 1; min-width: 0; }
+  .row > button { flex: 0 0 auto; }
+  .nodes { overflow: auto; flex: 1; padding: 4px 0; }
+  .node { display: flex; gap: 8px; align-items: center; padding: 5px 12px; cursor: pointer; border-left: 3px solid transparent; }
+  .node:hover { background: var(--panel2); }
+  .node.current { border-left-color: var(--warn); background: #2a2416; }
+  .node .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node .ip { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .node .ip.fail { color: var(--bad); }
+  .gdot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--dim); }
+  .gdot.ok { background: var(--ok); } .gdot.warn { background: var(--warn); } .gdot.bad { background: var(--bad); }
+  .tag.clickable { cursor: pointer; }
+  .tag.clickable:hover { filter: brightness(1.18); }
+  .pw-wrap { display: flex; gap: 6px; align-items: center; }
+  .pw-wrap input { flex: 1; min-width: 0; }
+  .gem-meta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; }
+  .gem-meta > div { font-size: 13px; }
+  aside .actions { padding: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+  .progress { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+  main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .tabs { display: flex; gap: 2px; padding: 8px 16px 0; border-bottom: 1px solid var(--line); }
+  .tab { padding: 8px 14px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; cursor: pointer; color: var(--dim); }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--line); margin-bottom: -1px; }
+  .view { display: none; flex: 1; overflow: auto; padding: 14px 16px; }
+  .view.active { display: block; }
+
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; min-width: 110px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { color: var(--dim); font-size: 12px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { position: sticky; top: -14px; background: var(--bg); cursor: pointer; user-select: none; color: var(--dim); font-weight: 500; z-index: 1; }
+  th.sorted { color: var(--text); }
+  tbody tr:hover { background: var(--panel); }
+  td.wrap { white-space: normal; min-width: 160px; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 12px; background: var(--panel2); border: 1px solid var(--line); }
+  .tag.ok { color: var(--ok); border-color: #2fbf7155; } .tag.warn { color: var(--warn); border-color: #f0a33a55; } .tag.bad { color: var(--bad); border-color: #ef535055; }
+  .score { font-family: var(--mono); font-weight: 600; }
+  .link { color: var(--accent); cursor: pointer; }
+  .link:hover { text-decoration: underline; }
+
+  .log { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+  .log .warn { color: var(--warn); } .log .error { color: var(--bad); }
+
+  .form { display: grid; grid-template-columns: 220px 1fr; gap: 10px 14px; max-width: 760px; align-items: center; }
+  .form label { color: var(--dim); }
+  .form .hint { grid-column: 2; font-size: 12px; color: var(--dim); margin-top: -6px; }
+  .note { background: #1d2635; border: 1px solid #2b3b55; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; color: #b8c7de; max-width: 760px; }
+
+  .modal { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; z-index: 10; }
+  .modal.show { display: flex; }
+  .modal .box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; width: min(1200px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
+  .modal .head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .modal .head h3 { margin: 0; font-size: 15px; flex: 1; }
+  .modal .content { overflow: auto; padding: 12px 16px; }
+  .toast { position: fixed; right: 16px; bottom: 16px; background: var(--panel2); border: 1px solid var(--line); padding: 10px 14px; border-radius: 8px; display: none; z-index: 20; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ip.cx 节点出口记录器</h1>
+  <span class="pill"><span class="dot" id="clashDot"></span><span id="clashText">连接 Clash…</span></span>
+  <span class="pill"><span class="dot" id="runDot"></span><span id="runText">空闲</span></span>
+  <span class="spacer"></span>
+  <span class="dim" id="autoText"></span>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="tools">
+      <div class="row">
+        <select id="groupSel"><option value="">全部节点</option></select>
+      </div>
+      <div class="row">
+        <input type="text" id="nodeSearch" placeholder="搜索节点名 / IP">
+      </div>
+      <div class="row">
+        <button class="sm" id="selAll">全选</button>
+        <button class="sm" id="selNone">清空</button>
+        <button class="sm" id="selInv">反选</button>
+        <button class="sm" id="selFail" title="选中最近一次失败或从未测试的节点">选失败/未测</button>
+        <span class="dim" style="text-align:right" id="selCount"></span>
+      </div>
+    </div>
+    <div class="nodes" id="nodeList"></div>
+    <div class="actions">
+      <div class="progress"><div id="progBar"></div></div>
+      <div class="dim" id="progText">—</div>
+      <div class="row">
+        <button class="primary" id="btnStart" style="flex:1">测试选中节点</button>
+        <button class="danger" id="btnStop" disabled>停止</button>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="tabs">
+      <div class="tab active" data-view="latest">最新结果</div>
+      <div class="tab" data-view="runs">测试记录</div>
+      <div class="tab" data-view="log">运行日志</div>
+      <div class="tab" data-view="settings">设置</div>
+    </div>
+
+    <section class="view active" id="view-latest">
+      <div class="stats" id="stats"></div>
+      <div class="row" style="margin-bottom:10px; max-width: 1280px; flex-wrap: wrap;">
+        <input type="text" id="tableFilter" placeholder="过滤：节点 / IP / 国家 / ISP / ASN / Gemini / YT …" style="min-width:220px">
+        <select id="geminiFilter" style="flex:0 0 auto; width:auto">
+          <option value="">Gemini: 全部</option>
+          <option value="full">完全支持</option>
+          <option value="usable">可用 (含风控/仅网页)</option>
+          <option value="partial">受限 / 风控</option>
+          <option value="no">不支持 / 被拦截</option>
+          <option value="drift">送中 / 地区漂移</option>
+          <option value="untested">未检测 Gemini</option>
+        </select>
+        <select id="ytFilter" style="flex:0 0 auto; width:auto">
+          <option value="">YT 翻译: 全部</option>
+          <option value="ok">可用</option>
+          <option value="rate_limited">429 限流</option>
+          <option value="blocked">被拦截</option>
+          <option value="error">检测失败</option>
+          <option value="fail">不可用 (限流/拦截/失败)</option>
+          <option value="untested">未检测 YT</option>
+        </select>
+        <label style="flex:0 0 auto" class="dim"><input type="checkbox" id="onlyOk"> 只看成功</label>
+        <label style="flex:0 0 auto" class="dim"><input type="checkbox" id="onlyDup"> 只看共用 IP</label>
+        <button onclick="location.href='/api/export.csv?latest=1'">导出 CSV（最新）</button>
+        <button onclick="location.href='/api/export.csv'">导出 CSV（全部历史）</button>
+      </div>
+      <table>
+        <thead><tr id="latestHead"></tr></thead>
+        <tbody id="latestBody"></tbody>
+      </table>
+    </section>
+
+    <section class="view" id="view-runs">
+      <table>
+        <thead><tr><th>#</th><th>开始</th><th>耗时</th><th>触发</th><th>节点数</th><th>成功</th><th>失败</th><th>备注</th><th></th></tr></thead>
+        <tbody id="runsBody"></tbody>
+      </table>
+    </section>
+
+    <section class="view" id="view-log"><div class="log" id="logBox"></div></section>
+
+    <section class="view" id="view-settings">
+      <div class="note">
+        原理：Clash 同一时刻一个策略组只能选一个节点，所以测试是<b>串行</b>的——临时切到 <b>global</b> 模式，
+        逐个把 <b>GLOBAL</b> 组切到各节点，经 Clash 混合端口并发执行 https://ip.cx/ 出口解析、
+        <b>Gemini 支持程度检测</b>（网页版 / Google 地区 / 风控 / AI Studio / API）及
+        <b>YouTube 自动字幕翻译检测</b>（实时拉取 ASR 轨探测简体中文翻译是否 429 限流）。
+        测试期间本机其它走 Clash 的流量也会跟着换节点，<b>结束后自动恢复</b>原模式和原选中节点。
+        数据保存在程序目录下的 <span class="mono">ipcx_records.db</span>（SQLite）。
+      </div>
+      <div class="form" id="cfgForm"></div>
+      <div style="margin-top:16px"><button class="primary" id="btnSaveCfg">保存设置</button></div>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="modal">
+  <div class="box">
+    <div class="head"><h3 id="modalTitle"></h3><button id="modalClose">关闭</button></div>
+    <div class="content" id="modalContent"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtTime = (t) => t ? new Date(t * 1000).toLocaleString('zh-CN', { hour12: false }) : '';
+const fmtDur = (s) => s == null ? '' : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m${Math.round(s % 60)}s`;
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function toast(msg, ms = 2500) {
+  const t = $('#toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = 'none', ms);
+}
+
+const S = {
+  overview: null, nodes: [], groups: {}, latest: {}, selected: new Set(JSON.parse(localStorage.getItem('ipcx_sel') || '[]')),
+  status: null, lastDone: -1, sortKey: 'node_idx', sortDir: 1, gemCache: new Map(), modalPrev: null,
+};
+const saveSel = () => localStorage.setItem('ipcx_sel', JSON.stringify([...S.selected]));
+
+/* ---------------------------------------------------------------- Gemini 展示辅助 */
+const GEM_META = {
+  full:        { label: '完全支持', cls: 'ok',   rank: 5 },
+  risk:        { label: '可用(风控)', cls: 'warn', rank: 4 },
+  web_only:    { label: '仅网页',   cls: 'warn', rank: 3 },
+  unsupported: { label: '不支持',   cls: 'bad',  rank: 2 },
+  blocked:     { label: '被拦截',   cls: 'bad',  rank: 1 },
+  error:       { label: '检测失败', cls: '',     rank: 0 },
+};
+const PROBE_META = {
+  ok:          ['正常', 'ok'],
+  reachable:   ['网关可达', 'ok'],
+  captcha:     ['验证码/429', 'warn'],
+  quota:       ['配额满', 'warn'],
+  key_invalid: ['Key无效', 'warn'],
+  unsupported: ['地区不支持', 'bad'],
+  blocked:     ['被拦截', 'bad'],
+  error:       ['失败', 'bad'],
+};
+function parseGem(r) {
+  if (!r || !r.gemini_json) return null;
+  if (r._gem_parsed !== undefined) return r._gem_parsed;
+  try { r._gem_parsed = JSON.parse(r.gemini_json); } catch { r._gem_parsed = null; }
+  return r._gem_parsed;
+}
+function gemDrift(r) {
+  if (!r?.gemini_region || !r?.country_code || r.gemini_region === r.country_code) return null;
+  if (r.gemini_region === 'CN')
+    return { text: '送中', cls: 'bad', title: `ip.cx=${r.country_code}，但 Google 识别为中国大陆 (CN)` };
+  if (r.gemini_level === 'unsupported')
+    return { text: `判${r.gemini_region}`, cls: 'bad', title: `ip.cx=${r.country_code}，但 Google 识别为 ${r.gemini_region}` };
+  return { text: `→${r.gemini_region}`, cls: 'ok', title: `ip.cx=${r.country_code}，Google 实际路由/识别为 ${r.gemini_region}` };
+}
+function gemSummaryText(r) {
+  const m = GEM_META[r?.gemini_level];
+  if (!m) return '';
+  const d = parseGem(r);
+  const lines = [`Gemini: ${m.label}` + (r.gemini_region ? ` (Google地区: ${r.gemini_region})` : '')];
+  const drift = gemDrift(r);
+  if (drift) lines.push(drift.title);
+  if (d) {
+    if (d.web) lines.push(`网页版: ${d.web.detail || d.web.status} (${d.web.latency_ms ?? '-'}ms)`);
+    if (d.risk) lines.push(`Google风控: ${d.risk.detail || d.risk.status} (${d.risk.latency_ms ?? '-'}ms)`);
+    if (d.aistudio) lines.push(`AI Studio: ${d.aistudio.detail || d.aistudio.status} (${d.aistudio.latency_ms ?? '-'}ms)`);
+    if (d.api) lines.push(`Gemini API: ${d.api.detail || d.api.status} (${d.api.latency_ms ?? '-'}ms)`);
+  }
+  lines.push('点击查看详细探测结果');
+  return lines.join('\n');
+}
+function geminiCell(r) {
+  const m = GEM_META[r?.gemini_level];
+  if (!m) return '<span class="dim">—</span>';
+  const key = String(r.id ?? `${r.node}@${r.tested_at ?? ''}`);
+  S.gemCache.set(key, r);
+  const d = parseGem(r);
+  const drift = gemDrift(r);
+  const regionPart = r.gemini_region && !drift ? ` <span class="dim mono">${esc(r.gemini_region)}</span>` : '';
+  const driftPart = drift ? ` <span class="tag ${drift.cls}" title="${esc(drift.title)}">${esc(drift.text)}</span>` : '';
+  let apiPart = '';
+  if (d?.api_verified && r.gemini_api === 'ok')
+    apiPart = ` <span class="tag ok" title="已通过 API Key 实测 generateContent 成功">API✓</span>`;
+  else if (r.gemini_api === 'key_invalid')
+    apiPart = ` <span class="tag warn" title="设置的 Gemini API Key 无效">Key无效</span>`;
+  else if (r.gemini_api === 'quota')
+    apiPart = ` <span class="tag warn" title="API 地区放行，但 Key 触发配额限制">配额满</span>`;
+  return `<span class="tag ${m.cls} clickable" data-gem="${esc(key)}" title="${esc(gemSummaryText(r))}">${m.label}</span>${regionPart}${driftPart}${apiPart}`;
+}
+function showGeminiDetail(key) {
+  const r = S.gemCache.get(key);
+  if (!r) return;
+  const m = GEM_META[r.gemini_level] || { label: r.gemini_level || '未知', cls: '' };
+  const d = parseGem(r) || {};
+  const drift = gemDrift(r);
+  const probeRow = (name, p, fallbackStatus) => {
+    const st = p?.status || fallbackStatus || '';
+    const [lbl, cls] = PROBE_META[st] || [st || '—', ''];
+    const http = p?.http_status ? `HTTP ${p.http_status}` : '—';
+    const ms = p?.latency_ms != null ? `${p.latency_ms}ms` : '—';
+    const detail = p?.detail || (st ? '' : '未记录');
+    return `<tr><td><b>${name}</b></td><td><span class="tag ${cls}">${esc(lbl)}</span></td><td class="mono">${esc(http)}</td><td class="mono">${esc(ms)}</td><td class="wrap">${esc(detail)}</td></tr>`;
+  };
+  const fromModal = $('#modal').classList.contains('show');
+  const backBtn = fromModal
+    ? `<button class="sm" id="modalBackBtn" style="margin-right:8px">← 返回</button>` : '';
+  const meta = `<div class="gem-meta">
+    <div>综合评级：<span class="tag ${m.cls}">${esc(m.label)}</span></div>
+    <div>Google 识别地区：<span class="mono">${esc(r.gemini_region || '未识别')}</span>${d.web?.region_iso3 ? ` <span class="dim mono">(${esc(d.web.region_iso3)})</span>` : ''}</div>
+    <div>ip.cx 国家：<span class="mono">${esc(r.country_code || '—')}</span>${drift ? ` <span class="tag ${drift.cls}">${esc(drift.text)}</span>` : ''}</div>
+    <div>API 检测模式：${d.api_verified ? '<span class="tag ok">API Key 实测</span>' : '<span class="tag">无 Key 网关探测</span>'}</div>
+    <div>总耗时：<span class="mono">${r.gemini_latency_ms != null ? r.gemini_latency_ms + 'ms' : '—'}</span></div>
+    <div>测试时间：<span class="dim">${fmtTime(r.tested_at)}</span></div>
+  </div>`;
+  const tbl = `<table><thead><tr><th>探测项</th><th>状态</th><th>HTTP</th><th>耗时</th><th>详情</th></tr></thead><tbody>
+    ${probeRow('Gemini 网页版 (gemini.google.com)', d.web, r.gemini_web)}
+    ${probeRow('Google 风控 (google.com/search)', d.risk, r.gemini_risk)}
+    ${probeRow('AI Studio (aistudio.google.com)', d.aistudio, '')}
+    ${probeRow('Gemini API (generativelanguage)', d.api, r.gemini_api)}
+  </tbody></table>`;
+  const extraErr = d.error ? `<div class="dim" style="margin-top:10px">异常信息：${esc(d.error)}</div>` : '';
+  openModal(`Gemini 检测详情：${r.node}`, (backBtn ? `<div style="margin-bottom:10px">${backBtn}</div>` : '') + meta + tbl + extraErr, true);
+}
+
+/* ---------------------------------------------------------------- YouTube 字幕翻译辅助 */
+const YT_META = {
+  ok:           { label: '可用',     cls: 'ok',   rank: 4 },
+  rate_limited: { label: '429 限流', cls: 'warn', rank: 3 },
+  blocked:      { label: '被拦截',   cls: 'bad',  rank: 2 },
+  error:        { label: '失败',     cls: '',     rank: 1 },
+};
+function parseYt(r) {
+  if (!r || !r.yt_translate_json) return null;
+  if (r._yt_parsed !== undefined) return r._yt_parsed;
+  try { r._yt_parsed = JSON.parse(r.yt_translate_json); } catch { r._yt_parsed = null; }
+  return r._yt_parsed;
+}
+function ytSummaryText(r) {
+  const m = YT_META[r?.yt_translate_status];
+  if (!m) return '';
+  const d = parseYt(r);
+  const code = r.yt_translate_code ? ` (HTTP ${r.yt_translate_code})` : '';
+  const lines = [`YT 字幕翻译: ${m.label}${code}`];
+  if (r.yt_translate_detail) lines.push(`说明: ${r.yt_translate_detail}`);
+  if (d?.track) lines.push(`ASR 轨: ${d.track.vssId || d.track.languageCode || 'asr'} (${d.track.languageCode || '-'})`);
+  if (d?.timedtext && d.timedtext.http_status) {
+    lines.push(`ACAO 头: ${d.timedtext.has_acao ? d.timedtext.acao : '缺失'} | 响应体: ${d.timedtext.body_len ?? 0}B`);
+  }
+  if (r.yt_translate_ms != null) lines.push(`耗时: ${r.yt_translate_ms}ms`);
+  lines.push('点击查看详细探测结果');
+  return lines.join('\n');
+}
+function ytCell(r) {
+  const m = YT_META[r?.yt_translate_status];
+  if (!m) return '<span class="dim">—</span>';
+  const key = String(r.id ?? `${r.node}@${r.tested_at ?? ''}`);
+  S.gemCache.set(key, r);
+  const code = r.yt_translate_code;
+  const codePart = (r.yt_translate_status !== 'ok' && r.yt_translate_status !== 'rate_limited' && code)
+    ? ` <span class="dim mono">${esc(code)}</span>` : '';
+  return `<span class="tag ${m.cls} clickable" data-yt="${esc(key)}" title="${esc(ytSummaryText(r))}">${m.label}</span>${codePart}`;
+}
+function showYtDetail(key) {
+  const r = S.gemCache.get(key);
+  if (!r) return;
+  const m = YT_META[r.yt_translate_status] || { label: r.yt_translate_status || '未知', cls: '' };
+  const d = parseYt(r) || {};
+  const w = d.watch || {};
+  const tr = d.track || null;
+  const tt = d.timedtext || {};
+  const fromModal = $('#modal').classList.contains('show');
+  const backBtn = fromModal
+    ? `<button class="sm" id="modalBackBtn" style="margin-right:8px">← 返回</button>` : '';
+  const meta = `<div class="gem-meta">
+    <div>检测结果：<span class="tag ${m.cls}">${esc(m.label)}</span></div>
+    <div>HTTP 状态：<span class="mono">${r.yt_translate_code ? 'HTTP ' + r.yt_translate_code : '—'}</span></div>
+    <div>测试视频：<span class="mono">${esc(d.video_id || '—')}</span></div>
+    <div>目标语言：<span class="mono">${esc(d.target_lang || 'zh-Hans')}</span></div>
+    <div>总耗时：<span class="mono">${r.yt_translate_ms != null ? r.yt_translate_ms + 'ms' : '—'}</span></div>
+    <div>测试时间：<span class="dim">${fmtTime(r.tested_at)}</span></div>
+  </div>`;
+  const trInfo = tr
+    ? `kind=${tr.kind}, vssId=${tr.vssId || '-'}, lang=${tr.languageCode || '-'}, translatable=${tr.isTranslatable ? 'true' : 'false'}`
+    : (w.playability ? `playability=${w.playability}${w.reason ? ' · ' + w.reason : ''}` : '未提取到 ASR 轨');
+  const ttInfo = tt.http_status
+    ? `ACAO: ${tt.has_acao ? tt.acao : '缺失'} | 响应体: ${tt.body_len ?? 0}B | Type: ${tt.content_type || '—'}`
+    : '未到达翻译接口';
+  const tbl = `<table><thead><tr><th>阶段</th><th>HTTP</th><th>耗时</th><th>详情</th></tr></thead><tbody>
+    <tr><td><b>1. 播放页 &amp; ASR 轨提取</b></td><td class="mono">${w.http_status ? 'HTTP ' + w.http_status : '—'}</td><td class="mono">${w.latency_ms != null ? w.latency_ms + 'ms' : '—'}</td><td class="wrap">${esc(trInfo)}</td></tr>
+    <tr><td><b>2. 自动翻译接口 (/api/timedtext)</b></td><td class="mono">${tt.http_status ? 'HTTP ' + tt.http_status : '—'}</td><td class="mono">${tt.latency_ms != null ? tt.latency_ms + 'ms' : '—'}</td><td class="wrap">${esc(ttInfo)}</td></tr>
+  </tbody></table>`;
+  const summary = r.yt_translate_detail ? `<div style="margin-top:10px" class="dim">结论说明：${esc(r.yt_translate_detail)}</div>` : '';
+  openModal(`YouTube 字幕翻译详情：${r.node}`, (backBtn ? `<div style="margin-bottom:10px">${backBtn}</div>` : '') + meta + tbl + summary, true);
+}
+
+/* ---------------------------------------------------------------- 节点列表 */
+function visibleNodes() {
+  const g = $('#groupSel').value, kw = $('#nodeSearch').value.trim().toLowerCase();
+  let list = g ? (S.groups[g] || []) : S.nodes;
+  if (kw) list = list.filter(n => n.toLowerCase().includes(kw) || (S.latest[n]?.ip || '').includes(kw));
+  return list;
+}
+function renderNodes() {
+  const cur = S.status?.running ? S.status.current : null;
+  const html = visibleNodes().map(n => {
+    const r = S.latest[n];
+    const ip = r ? (r.ok ? `${r.flag || ''} ${r.ip}` : '失败') : '';
+    const gm = GEM_META[r?.gemini_level];
+    const gdot = gm ? `<span class="gdot ${gm.cls}" title="Gemini: ${gm.label}${r.gemini_region ? ' (' + r.gemini_region + ')' : ''}"></span>` : '';
+    return `<label class="node ${n === cur ? 'current' : ''}" data-n="${esc(n)}">
+      <input type="checkbox" ${S.selected.has(n) ? 'checked' : ''}>
+      ${gdot}
+      <span class="name" title="${esc(n)}">${esc(n)}</span>
+      <span class="ip ${r && !r.ok ? 'fail' : ''}">${esc(ip)}</span></label>`;
+  }).join('');
+  $('#nodeList').innerHTML = html || '<div class="dim" style="padding:12px">没有节点</div>';
+  $('#selCount').textContent = `已选 ${S.selected.size}/${S.nodes.length}`;
+  $('#btnStart').textContent = S.selected.size ? `测试选中节点 (${S.selected.size})` : '测试全部节点';
+}
+$('#nodeList').addEventListener('change', (e) => {
+  const n = e.target.closest('.node')?.dataset.n; if (!n) return;
+  e.target.checked ? S.selected.add(n) : S.selected.delete(n); saveSel(); renderNodes();
+});
+$('#groupSel').onchange = renderNodes;
+$('#nodeSearch').oninput = renderNodes;
+$('#selAll').onclick = () => { visibleNodes().forEach(n => S.selected.add(n)); saveSel(); renderNodes(); };
+$('#selNone').onclick = () => { S.selected.clear(); saveSel(); renderNodes(); };
+$('#selInv').onclick = () => { visibleNodes().forEach(n => S.selected.has(n) ? S.selected.delete(n) : S.selected.add(n)); saveSel(); renderNodes(); };
+$('#selFail').onclick = () => { S.selected.clear(); visibleNodes().forEach(n => { if (!S.latest[n] || !S.latest[n].ok) S.selected.add(n); }); saveSel(); renderNodes(); };
+
+/* ---------------------------------------------------------------- 最新结果表 */
+const COLS = [
+  ['node_idx', '节点'], ['ip', '出口 IP'], ['country', '国家/地区'], ['gemini_rank', 'Gemini 支持'], ['yt_rank', 'YT 翻译'],
+  ['city', '城市'], ['ip_type', 'IP 类型'], ['isp', 'ISP / 组织'], ['asn', 'ASN'], ['score', '评分'],
+  ['proxy_status', '代理'], ['threat', '威胁'], ['delay_ms', '延迟'], ['latency_ms', 'ip.cx 耗时'],
+  ['tests', '次数'], ['tested_at', '测试时间'],
+];
+function tagFor(text, goodWords, badWords) {
+  if (!text) return '';
+  const cls = badWords.some(w => text.includes(w)) ? 'bad' : goodWords.some(w => text.includes(w)) ? 'ok' : 'warn';
+  return `<span class="tag ${cls}">${esc(text)}</span>`;
+}
+function scoreCell(s) {
+  if (s == null) return '';
+  const c = s >= 80 ? 'var(--ok)' : s >= 50 ? 'var(--warn)' : 'var(--bad)';
+  return `<span class="score" style="color:${c}">${s}</span>`;
+}
+function renderLatest() {
+  const idx = new Map(S.nodes.map((n, i) => [n, i]));
+  let rows = Object.values(S.latest).map(r => ({
+    ...r,
+    node_idx: idx.has(r.node) ? idx.get(r.node) : 1e9,
+    gemini_rank: r.gemini_level ? (GEM_META[r.gemini_level]?.rank ?? 0) : null,
+    yt_rank: r.yt_translate_status ? (YT_META[r.yt_translate_status]?.rank ?? 0) : null,
+  }));
+  const ipCount = {};
+  rows.forEach(r => { if (r.ok && r.ip) ipCount[r.ip] = (ipCount[r.ip] || 0) + 1; });
+
+  // 统计
+  const ok = rows.filter(r => r.ok);
+  const countries = new Set(ok.map(r => r.country_code).filter(Boolean));
+  const dupIps = Object.values(ipCount).filter(c => c > 1).length;
+  const changed = ok.filter(r => r.prev_ip && r.prev_ip !== r.ip).length;
+  const avgScore = ok.filter(r => r.score != null);
+  const gemRows = rows.filter(r => r.gemini_level);
+  const gemFull = gemRows.filter(r => r.gemini_level === 'full').length;
+  const gemUsable = gemRows.filter(r => ['full', 'risk', 'web_only'].includes(r.gemini_level)).length;
+  const gemDriftCnt = gemRows.filter(r => gemDrift(r)).length;
+  const ytRows = rows.filter(r => r.yt_translate_status);
+  const ytOk = ytRows.filter(r => r.yt_translate_status === 'ok').length;
+  const yt429 = ytRows.filter(r => r.yt_translate_status === 'rate_limited').length;
+  const statItems = [
+    [S.nodes.length, '节点总数'], [rows.length, '已测节点'], [ok.length, '最近一次成功'],
+    [rows.length - ok.length, '最近一次失败'], [Object.keys(ipCount).length, '不同出口 IP'],
+    [dupIps, '被多个节点共用的 IP'], [countries.size, '国家/地区'], [changed, '较上次 IP 变化'],
+    [avgScore.length ? Math.round(avgScore.reduce((a, r) => a + r.score, 0) / avgScore.length) : '—', '平均评分'],
+    [gemRows.length ? `${gemFull}/${gemRows.length}` : '—', 'Gemini 完全支持'],
+    [gemRows.length ? `${gemUsable}/${gemRows.length}` : '—', 'Gemini 可用'],
+    [ytRows.length ? `${ytOk}/${ytRows.length}` : '—', 'YT 翻译可用'],
+  ];
+  if (yt429 > 0) statItems.push([yt429, 'YT 429 限流']);
+  if (gemDriftCnt > 0) statItems.push([gemDriftCnt, 'Google 地区漂移']);
+  $('#stats').innerHTML = statItems.map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+
+  const kw = $('#tableFilter').value.trim().toLowerCase();
+  if (kw) rows = rows.filter(r => {
+    const gm = GEM_META[r.gemini_level]?.label || '';
+    const dr = gemDrift(r)?.text || '';
+    const ytLbl = YT_META[r.yt_translate_status]?.label || '';
+    return [r.node, r.ip, r.country, r.city, r.isp, r.org, r.asn, r.ip_type, r.error, r.country_code,
+      r.gemini_level, r.gemini_region, gm, dr, r.yt_translate_status, r.yt_translate_code, r.yt_translate_detail, ytLbl]
+      .some(v => String(v || '').toLowerCase().includes(kw));
+  });
+  const gf = $('#geminiFilter').value;
+  if (gf === 'full') rows = rows.filter(r => r.gemini_level === 'full');
+  else if (gf === 'usable') rows = rows.filter(r => ['full', 'risk', 'web_only'].includes(r.gemini_level));
+  else if (gf === 'partial') rows = rows.filter(r => ['risk', 'web_only'].includes(r.gemini_level));
+  else if (gf === 'no') rows = rows.filter(r => ['unsupported', 'blocked'].includes(r.gemini_level));
+  else if (gf === 'drift') rows = rows.filter(r => Boolean(gemDrift(r)));
+  else if (gf === 'untested') rows = rows.filter(r => !r.gemini_level);
+
+  const yf = $('#ytFilter').value;
+  if (yf === 'ok') rows = rows.filter(r => r.yt_translate_status === 'ok');
+  else if (yf === 'rate_limited') rows = rows.filter(r => r.yt_translate_status === 'rate_limited');
+  else if (yf === 'blocked') rows = rows.filter(r => r.yt_translate_status === 'blocked');
+  else if (yf === 'error') rows = rows.filter(r => r.yt_translate_status === 'error');
+  else if (yf === 'fail') rows = rows.filter(r => r.yt_translate_status && r.yt_translate_status !== 'ok');
+  else if (yf === 'untested') rows = rows.filter(r => !r.yt_translate_status);
+
+  if ($('#onlyOk').checked) rows = rows.filter(r => r.ok);
+  if ($('#onlyDup').checked) rows = rows.filter(r => r.ok && ipCount[r.ip] > 1);
+
+  const k = S.sortKey, d = S.sortDir;
+  rows.sort((a, b) => {
+    let x = a[k], y = b[k];
+    const xe = x == null || x === '', ye = y == null || y === '';
+    if (xe && ye) return 0; if (xe) return 1; if (ye) return -1;
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * d;
+    return String(x).localeCompare(String(y), 'zh-CN', { numeric: true }) * d;
+  });
+
+  $('#latestHead').innerHTML = COLS.map(([key, label]) =>
+    `<th data-k="${key}" class="${key === k ? 'sorted' : ''}">${label}${key === k ? (d > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('');
+
+  $('#latestBody').innerHTML = rows.map(r => {
+    if (!r.ok) return `<tr><td><span class="link" data-hist="${esc(r.node)}">${esc(r.node)}</span></td>
+      <td colspan="${COLS.length - 3}"><span class="tag bad">失败</span> <span class="dim">${esc(r.error)}</span>${r.gemini_level ? ` &nbsp;·&nbsp; Gemini：${geminiCell(r)}` : ''}${r.yt_translate_status ? ` &nbsp;·&nbsp; YT翻译：${ytCell(r)}` : ''}</td>
+      <td class="mono">${r.tests ?? ''}</td><td class="dim">${fmtTime(r.tested_at)}</td></tr>`;
+    const dup = ipCount[r.ip] > 1 ? ` <span class="tag warn" title="有 ${ipCount[r.ip]} 个节点是这个出口">×${ipCount[r.ip]}</span>` : '';
+    const chg = r.prev_ip && r.prev_ip !== r.ip ? ` <span class="tag" title="上次：${esc(r.prev_ip)}">变</span>` : '';
+    return `<tr>
+      <td><span class="link" data-hist="${esc(r.node)}">${esc(r.node)}</span></td>
+      <td class="mono"><span class="link" data-ip="${esc(r.ip)}" title="${esc(r.host || '')}">${esc(r.ip)}</span>${dup}${chg}</td>
+      <td>${esc(r.flag || '')} ${esc(r.country || '')} <span class="dim mono">${esc(r.country_code || '')}</span></td>
+      <td>${geminiCell(r)}</td>
+      <td>${ytCell(r)}</td>
+      <td>${esc([r.region, r.city].filter((v, i, a) => v && a.indexOf(v) === i).join(' · '))}</td>
+      <td>${tagFor(r.ip_type, ['住宅', '家庭', '移动', '宽带'], ['数据中心', '机房', '托管'])}</td>
+      <td class="wrap">${esc(r.isp || '')}${r.org && r.org !== r.isp ? `<br><span class="dim">${esc(r.org)}</span>` : ''}</td>
+      <td class="mono" title="${esc(r.bot_ratio || '')}">${esc(r.asn || '')}</td>
+      <td>${scoreCell(r.score)}</td>
+      <td>${tagFor(r.proxy_status, ['非代理', '未发现', '无'], [])}</td>
+      <td>${tagFor(r.threat, ['无威胁', '无'], ['恶意', '攻击', '垃圾', '滥用', '威胁'])}</td>
+      <td class="mono">${r.delay_ms != null ? r.delay_ms + 'ms' : ''}</td>
+      <td class="mono">${r.latency_ms != null ? r.latency_ms + 'ms' : ''}</td>
+      <td class="mono">${r.tests ?? ''}${r.distinct_ips > 1 ? ` <span class="dim" title="历史上出现过的不同 IP 数">(${r.distinct_ips}IP)</span>` : ''}</td>
+      <td class="dim">${fmtTime(r.tested_at)}</td></tr>`;
+  }).join('') || `<tr><td colspan="${COLS.length}" class="dim">还没有数据，左侧选择节点后点「测试」</td></tr>`;
+}
+$('#latestHead').addEventListener('click', (e) => {
+  const k = e.target.closest('th')?.dataset.k; if (!k) return;
+  S.sortDir = S.sortKey === k ? -S.sortDir : (k === 'gemini_rank' || k === 'yt_rank' ? -1 : 1); S.sortKey = k; renderLatest();
+});
+['#tableFilter', '#onlyOk', '#onlyDup'].forEach(s => $(s).addEventListener('input', renderLatest));
+['#geminiFilter', '#ytFilter'].forEach(s => $(s).addEventListener('change', renderLatest));
+document.body.addEventListener('click', (e) => {
+  if (e.target.id === 'modalBackBtn' && S.modalPrev) {
+    const prev = S.modalPrev; S.modalPrev = null;
+    return openModal(prev.title, prev.html, false);
+  }
+  const g = e.target.closest('[data-gem]'); if (g) return showGeminiDetail(g.dataset.gem);
+  const y = e.target.closest('[data-yt]'); if (y) return showYtDetail(y.dataset.yt);
+  const h = e.target.closest('[data-hist]'); if (h) return showHistory(h.dataset.hist);
+  const i = e.target.closest('[data-ip]'); if (i) return showIp(i.dataset.ip);
+  const r = e.target.closest('[data-run]'); if (r) return showRun(+r.dataset.run);
+  const del = e.target.closest('[data-delrun]');
+  if (del && confirm(`删除第 ${del.dataset.delrun} 次测试及其全部结果？`))
+    api('/api/run/delete', { id: +del.dataset.delrun }).then(() => { loadRuns(); loadLatest(); });
+});
+
+/* ---------------------------------------------------------------- 弹窗：历史 */
+function resultTable(rows, showNode) {
+  return `<table><thead><tr>${showNode ? '<th>节点</th>' : ''}<th>时间</th><th>结果</th><th>IP</th><th>位置</th><th>Gemini</th><th>YT 翻译</th><th>类型</th>
+    <th>ISP</th><th>ASN</th><th>评分</th><th>代理</th><th>威胁</th><th>延迟</th></tr></thead><tbody>${rows.map(r => `<tr>
+    ${showNode ? `<td><span class="link" data-hist="${esc(r.node)}">${esc(r.node)}</span></td>` : ''}
+    <td class="dim">${fmtTime(r.tested_at)}</td>
+    <td>${r.ok ? '<span class="tag ok">成功</span>' : `<span class="tag bad" title="${esc(r.error)}">失败</span>`}</td>
+    ${r.ok ? `<td class="mono">${esc(r.ip)}</td><td>${esc(r.flag || '')} ${esc(r.country || '')} ${esc(r.city || '')}</td>
+    <td>${geminiCell(r)}</td><td>${ytCell(r)}</td><td>${esc(r.ip_type || '')}</td><td>${esc(r.isp || '')}</td><td class="mono">${esc(r.asn || '')}</td><td>${scoreCell(r.score)}</td>
+    <td>${esc(r.proxy_status || '')}</td><td>${esc(r.threat || '')}</td><td class="mono">${r.delay_ms ?? ''}</td>`
+    : `<td colspan="11" class="dim">${esc(r.error)}${r.gemini_level ? ` &nbsp;·&nbsp; Gemini：${geminiCell(r)}` : ''}${r.yt_translate_status ? ` &nbsp;·&nbsp; YT翻译：${ytCell(r)}` : ''}</td>`}</tr>`).join('')}</tbody></table>`;
+}
+function openModal(title, html, pushPrev = false) {
+  if (pushPrev && $('#modal').classList.contains('show')) {
+    S.modalPrev = { title: $('#modalTitle').textContent, html: $('#modalContent').innerHTML };
+  } else if (!pushPrev) {
+    S.modalPrev = null;
+  }
+  $('#modalTitle').textContent = title; $('#modalContent').innerHTML = html; $('#modal').classList.add('show');
+}
+$('#modalClose').onclick = () => { S.modalPrev = null; $('#modal').classList.remove('show'); };
+$('#modal').onclick = (e) => { if (e.target.id === 'modal') { S.modalPrev = null; $('#modal').classList.remove('show'); } };
+async function showHistory(node) {
+  const rows = await api('/api/history?node=' + encodeURIComponent(node));
+  const ips = {}; rows.filter(r => r.ok).forEach(r => ips[r.ip] = (ips[r.ip] || 0) + 1);
+  const summary = Object.entries(ips).map(([ip, c]) => `<span class="tag mono">${esc(ip)} ×${c}</span>`).join(' ');
+  openModal(`历史记录：${node}（${rows.length} 次）`, `<div style="margin-bottom:10px">出现过的 IP：${summary || '—'}</div>` + resultTable(rows, false));
+}
+async function showIp(ip) {
+  const rows = await api('/api/ip?ip=' + encodeURIComponent(ip));
+  const nodes = [...new Set(rows.map(r => r.node))];
+  openModal(`IP ${ip}：出现在 ${nodes.length} 个节点`, resultTable(rows, true));
+}
+async function showRun(id) {
+  const rows = await api('/api/run?id=' + id);
+  openModal(`第 ${id} 次测试（${rows.length} 条）`,
+    `<div style="margin-bottom:10px"><button onclick="location.href='/api/export.csv?run_id=${id}'">导出本次 CSV</button></div>` + resultTable(rows, true));
+}
+
+/* ---------------------------------------------------------------- 测试记录 */
+async function loadRuns() {
+  const runs = await api('/api/runs');
+  $('#runsBody').innerHTML = runs.map(r => `<tr>
+    <td class="mono">${r.id}</td><td>${fmtTime(r.started_at)}</td>
+    <td>${r.finished_at ? fmtDur(r.finished_at - r.started_at) : '<span class="tag warn">进行中</span>'}</td>
+    <td>${r.note === 'auto' ? '定时' : r.note === 'manual' ? '手动' : '—'}</td>
+    <td class="mono">${r.total}</td><td class="mono" style="color:var(--ok)">${r.ok}</td><td class="mono" style="color:var(--bad)">${r.fail}</td>
+    <td class="dim">${['auto', 'manual'].includes(r.note) ? '' : esc(r.note || '')}</td>
+    <td><button class="sm" data-run="${r.id}">查看</button> <button class="sm" data-delrun="${r.id}">删除</button></td></tr>`).join('')
+    || '<tr><td colspan="9" class="dim">暂无</td></tr>';
+}
+
+/* ---------------------------------------------------------------- 设置 */
+const CFG_FIELDS = [
+  ['clash_api', 'Clash 控制器地址', 'text'],
+  ['secret', '密钥 (secret)', 'text'],
+  ['proxy_url', '代理入口', 'text', '留空 = 自动使用 Clash 的 mixed-port，例如 http://127.0.0.1:7897'],
+  ['test_group', '用于切换节点的策略组', 'select', '默认 GLOBAL，配合「临时切 global 模式」可保证 ip.cx 一定走被测节点'],
+  ['force_global_mode', '测试时临时切到 global 模式', 'bool'],
+  ['precheck_delay', '先做 Clash 延迟测试，不通则跳过', 'bool', '能大幅节省死节点的超时等待'],
+  ['delay_url', '延迟测试 URL', 'text'],
+  ['delay_timeout_ms', '延迟测试超时 (ms)', 'number'],
+  ['timeout_sec', '访问 ip.cx 超时 (秒)', 'number'],
+  ['retries', '失败重试次数', 'number'],
+  ['switch_wait_sec', '切换节点后等待 (秒)', 'number'],
+  ['interval_sec', '节点之间间隔 (秒)', 'number', '节点很多时可适当加大，避免对 ip.cx 请求过快'],
+  ['with_geo_api', '同时请求 ip.cx 多库定位接口', 'bool', 'IP2Location / DB-IP / IPinfo，会多一次请求'],
+  ['check_gemini', '同时检测 Gemini 支持程度', 'bool', '并发探测 Gemini 网页版、Google 识别地区（查送中）、Google 风控与 AI Studio / API，每节点约多耗时 1~2 秒'],
+  ['gemini_timeout_sec', 'Gemini 检测超时 (秒)', 'number'],
+  ['gemini_api_key', 'Gemini API Key（可选）', 'password', '留空仅探测 API 网关可达性；填写后会发送极简请求 (maxOutputTokens=1) 实测该出口是否被地区/机房拒绝'],
+  ['gemini_api_model', 'Gemini API 实测模型', 'text', '默认 gemini-3.5-flash-lite；仅在填写 API Key 后生效'],
+  ['check_yt_translate', '启用 YouTube 字幕翻译检测', 'bool', '实时拉取公开视频的 ASR 自动生成英文字幕轨并探测简体中文翻译是否触发 429 限流（与 ip.cx / Gemini 并发执行）'],
+  ['yt_video_id', 'YouTube 测试视频 ID', 'text', '默认 dQw4w9WgXcQ（也支持粘贴完整 YouTube 链接，需含英文自动生成字幕）'],
+  ['yt_timeout_sec', 'YouTube 字幕检测超时 (秒)', 'number'],
+  ['auto_interval_min', '定时自动测试间隔 (分钟)', 'number', '0 = 关闭；需要本程序保持运行'],
+  ['auto_nodes_mode', '定时测试的节点', 'autonodes'],
+];
+function renderSettings() {
+  const c = S.overview.config, sels = S.overview.selectors || [];
+  $('#cfgForm').innerHTML = CFG_FIELDS.map(([k, label, type, hint]) => {
+    let input;
+    if (type === 'bool') input = `<input type="checkbox" data-k="${k}" ${c[k] ? 'checked' : ''} style="justify-self:start">`;
+    else if (type === 'select') input = `<select data-k="${k}">${[...new Set(['GLOBAL', ...sels])].map(s =>
+      `<option ${s === c[k] ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>`;
+    else if (type === 'autonodes') input = `<select data-k="auto_nodes_mode"><option value="all" ${!c.auto_nodes?.length ? 'selected' : ''}>全部节点</option>
+      <option value="sel" ${c.auto_nodes?.length ? 'selected' : ''}>保存时左侧选中的节点${c.auto_nodes?.length ? `（当前 ${c.auto_nodes.length} 个）` : ''}</option></select>`;
+    else if (type === 'password') input = `<div class="pw-wrap"><input type="password" data-k="${k}" value="${esc(c[k])}" autocomplete="off" placeholder="AIza...（留空则仅无 Key 探测）"><button type="button" class="sm" data-toggle-pw="${k}">显示</button></div>`;
+    else input = `<input type="${type}" data-k="${k}" value="${esc(c[k])}" ${type === 'number' ? 'step="any"' : ''}>`;
+    return `<label>${label}</label>${input}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}`;
+  }).join('');
+}
+$('#cfgForm').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-toggle-pw]');
+  if (!btn) return;
+  const inp = $(`#cfgForm [data-k="${btn.dataset.togglePw}"]`);
+  if (!inp) return;
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? '隐藏' : '显示';
+});
+$('#btnSaveCfg').onclick = async () => {
+  const patch = {};
+  document.querySelectorAll('#cfgForm [data-k]').forEach(el => {
+    const k = el.dataset.k;
+    if (k === 'auto_nodes_mode') patch.auto_nodes = el.value === 'sel' ? [...S.selected] : [];
+    else if (el.type === 'checkbox') patch[k] = el.checked;
+    else if (el.type === 'number') patch[k] = Number(el.value);
+    else patch[k] = el.value.trim();
+  });
+  try { await api('/api/config', patch); toast('已保存'); await loadOverview(); } catch (e) { toast('保存失败：' + e.message); }
+};
+
+/* ---------------------------------------------------------------- 启停 & 轮询 */
+$('#btnStart').onclick = async () => {
+  const nodes = S.nodes.filter(n => S.selected.has(n));
+  if (!nodes.length && !confirm(`没有选中节点，测试全部 ${S.nodes.length} 个？`)) return;
+  try { const r = await api('/api/start', { nodes }); toast(`已开始第 ${r.run_id} 次测试`); poll(); }
+  catch (e) { toast('启动失败：' + e.message); }
+};
+$('#btnStop').onclick = () => api('/api/stop', {}).then(() => toast('将在当前节点完成后停止'));
+
+async function loadOverview() {
+  const o = await api('/api/overview');
+  S.overview = o; S.nodes = o.nodes; S.groups = o.groups;
+  const ns = new Set(S.nodes); [...S.selected].forEach(n => { if (!ns.has(n)) S.selected.delete(n); });
+  if (o.clash_ok) {
+    $('#clashDot').className = 'dot ok';
+    $('#clashText').textContent = `Clash ${o.version?.meta ? 'Meta ' : ''}${o.version?.version || ''} · ${o.clash.mode} · 端口 ${o.clash['mixed-port'] || o.clash.port} · ${o.nodes.length} 节点`;
+  } else {
+    $('#clashDot').className = 'dot bad'; $('#clashText').textContent = 'Clash 连接失败：' + o.clash_error;
+  }
+  const cur = $('#groupSel').value;
+  $('#groupSel').innerHTML = `<option value="">全部节点 (${S.nodes.length})</option>` +
+    Object.entries(S.groups).map(([g, l]) => `<option value="${esc(g)}" ${g === cur ? 'selected' : ''}>${esc(g)} (${l.length})</option>`).join('');
+  const m = +o.config.auto_interval_min;
+  $('#autoText').textContent = m > 0 ? `定时测试：每 ${m} 分钟` : '';
+  renderSettings(); renderNodes();
+}
+async function loadLatest() {
+  const rows = await api('/api/latest');
+  S.latest = Object.fromEntries(rows.map(r => [r.node, r]));
+  renderLatest(); renderNodes();
+}
+function renderStatus(s) {
+  const pct = s.total ? Math.round(s.done / s.total * 100) : 0;
+  $('#progBar').style.width = (s.running ? pct : s.total ? 100 : 0) + '%';
+  $('#runDot').className = 'dot ' + (s.running ? 'run' : '');
+  $('#runText').textContent = s.running ? `测试中 ${s.done}/${s.total}` : (s.finished_at ? `空闲 · 上次完成于 ${fmtTime(s.finished_at)}` : '空闲');
+  $('#progText').textContent = s.running
+    ? `${s.done}/${s.total}  ✓${s.ok} ✗${s.fail}  当前：${s.current || ''}`
+    : s.total ? `上次：${s.done}/${s.total}  ✓${s.ok} ✗${s.fail}` : '—';
+  $('#btnStart').disabled = s.running; $('#btnStop').disabled = !s.running;
+  const box = $('#logBox'), atBottom = box.parentElement.scrollTop + box.parentElement.clientHeight >= box.parentElement.scrollHeight - 30;
+  box.innerHTML = s.log.map(l => `<div class="${l.level}">[${new Date(l.t * 1000).toLocaleTimeString('zh-CN', { hour12: false })}] ${esc(l.msg)}</div>`).join('');
+  if (atBottom) box.parentElement.scrollTop = box.parentElement.scrollHeight;
+}
+let pollTimer;
+async function poll() {
+  clearTimeout(pollTimer);
+  try {
+    const s = await api('/api/status');
+    const wasRunning = S.status?.running;
+    S.status = s; renderStatus(s);
+    if (s.done !== S.lastDone || wasRunning !== s.running) {
+      S.lastDone = s.done; await loadLatest();
+      if (wasRunning && !s.running) { loadRuns(); loadOverview(); toast(`测试完成：成功 ${s.ok}，失败 ${s.fail}`, 4000); }
+    }
+    if (s.running) renderNodes();
+  } catch (e) { $('#runText').textContent = '后端无响应'; }
+  pollTimer = setTimeout(poll, S.status?.running ? 1000 : 4000);
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + t.dataset.view));
+  if (t.dataset.view === 'runs') loadRuns();
+});
+
+(async () => {
+  try { await loadOverview(); } catch (e) { toast('加载失败：' + e.message, 5000); }
+  await loadLatest(); loadRuns(); poll();
+})();
+</script>
+</body>
+</html>
